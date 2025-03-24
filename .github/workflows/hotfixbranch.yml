@@ -1,0 +1,30 @@
+name: make hotfix branch
+
+on:
+  workflow_call:
+    inputs:
+      release:
+        type: string
+        required: true
+        description: The release tag which hotfix will be based on ,  e.g. v1.2.0
+
+jobs:
+  build:
+    name: make hotfix branch off release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: branch
+        name: make hotfix branch off release tag
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: |
+          hotfixbranch="hotfix/${RELEASE}"
+          echo "Making a hotfix branch $hotfixbranch from release tag ${RELEASE}"
+          git branch "$hotfixbranch" "${RELEASE}"
+          git checkout "$hotfixbranch"
+          git push origin "$hotfixbranch"

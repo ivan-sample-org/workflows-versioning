@@ -1,0 +1,46 @@
+name: Calculate branch version and release
+description:
+  Calculate the version and release for the current or given branch name, app
+  version and app version tag as calculated by an action like
+  paulhatch/semantic-version.
+author: Georges Zwingelstein
+
+# Add your action's branding here. This will appear on the GitHub Marketplace.
+branding:
+  icon: 'heart'
+  color: 'red'
+
+# Define your inputs here.
+inputs:
+  branch-name:
+    description: The branch name.
+    # See https://github.com/ra-ftds/ftds-actions-typescript/blob/v1/actions/calculate-branch-version-release/README.md#notes
+    default: |
+      ${{ github.event_name == 'delete' && github.ref_type == 'branch' && github.event.ref
+      || github.head_ref && github.head_ref
+      || github.ref_name }}
+  default-branch:
+    description: The defaut branch name.
+    default: ${{ github.event.repository.default_branch }}
+  app-version:
+    description:
+      The app version as calculated by action like paulhatch/semantic-version.
+    required: true
+  app-version-tag:
+    description:
+      The app version tag as calculated by action like
+      paulhatch/semantic-version.
+    required: true
+
+# Define your outputs here.
+outputs:
+  version:
+    description: The version to be used for publishing artifacts, e.g. 1.2.0.
+  release:
+    description:
+      The release to be used to create a Git tag or a GitHub release, e.g.
+      v1.2.0.
+
+runs:
+  using: node20
+  main: ../../dist/calculate-branch-version-release/index.js

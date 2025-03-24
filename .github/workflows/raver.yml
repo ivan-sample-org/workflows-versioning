@@ -44,12 +44,15 @@ jobs:
           # bump_each_commit: true
           change_path: "."
 
-      - uses: ra-ftds/ftds-actions-typescript/actions/calculate-branch-version-release@v1
-        id: set_versions_step
-        with:
-          branch-name: ${{ env.BRANCH_NAME }}
-          app-version: ${{ steps.app-version.outputs.version }}
-          app-version-tag: ${{ steps.app-version.outputs.version_tag }}
+    
+       - name: Set versions
+        id: set_versions_step   
+        run: |
+          echo "Version: ${{ steps.app-version.outputs.version }}"
+          echo "Release: ${{ steps.app-version.outputs.version_tag }}"
+          echo "::set-output name=version::${{ steps.app-version.outputs.version }}"
+          echo "::set-output name=release::${{ steps.app-version.outputs.version_tag }}"
+     
 
       - name: Create tag and push
         if:  github.ref_name == 'main' || contains(github.ref_name, 'hotfix' )
