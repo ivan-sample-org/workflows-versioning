@@ -1,0 +1,28 @@
+
+# Call it from a local workflow like this:
+#   - name: get 
+#     id: something
+#     uses: './.github/actions/get-flux-template'
+#
+name: get templates for flux
+description: 'get template for helm compose or deploy'
+
+
+outputs:
+  template_path:
+    description: 'The path to template'
+    value: ${{ steps.copy-template.outputs.template_path }}
+
+runs:
+  using: composite
+  steps:
+    - name: copy template into workspace 
+      id: copy-template
+      shell: bash
+      run: |
+          template_path="${GITHUB_WORKSPACE}/_fluxtemplates_"
+          mkdir -p $template_path
+          cp -R  ${{ github.action_path }}/templates/* $template_path
+          echo "template_path=$template_path" >> $GITHUB_OUTPUT
+          ls  $template_path/*
+

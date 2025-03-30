@@ -24,12 +24,15 @@ jobs:
         shell: bash
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.set_versions_step.outputs.version }}
-      release: ${{ steps.set_versions_step.outputs.release }}
+      version: ${{ steps.app-version.outputs.version }}
+      release: ${{ steps.app-version.outputs.version_tag }}
+   
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+        
       - name: app version
         id: app-version
         uses: paulhatch/semantic-version@v5.4.0
@@ -39,32 +42,21 @@ jobs:
           # major_regexp_flags: ""
           minor_pattern: "(MINOR)"
           # minor_regexp_flags: ""
-          version_format: "${major}.${minor}.${patch}"
+          version_format: "${major}.${minor}.${patch}-${increment}"
           bump_each_commit: ${{ github.ref_name == 'main' }}
           # bump_each_commit: true
           change_path: "."
-
-    
-       - name: Set versions
-        id: set_versions_step   
-        run: |
-          echo "Version: ${{ steps.app-version.outputs.version }}"
-          echo "Release: ${{ steps.app-version.outputs.version_tag }}"
-          echo "::set-output name=version::${{ steps.app-version.outputs.version }}"
-          echo "::set-output name=release::${{ steps.app-version.outputs.version_tag }}"
-     
-
+      
       - name: Create tag and push
-        if:  github.ref_name == 'main' || contains(github.ref_name, 'hotfix' )
+        if: github.ref_name == 'main' || github.ref_name == 'hotfix'
         run: |
           rc=0
-          git show-ref --tags ${{ steps.set_versions_step.outputs.release }} --quiet || rc="$?"
-          
-          if  [ $rc -eq 0 ]; then
-            echo "App no changes, skip tagging ${{ steps.set_versions_step.outputs.release }}"
-            
-          else
-            echo "App changed , pushing new tag ${{ steps.set_versions_step.outputs.release }} "
-            git tag ${{ steps.set_versions_step.outputs.release }} && git push --tags    
+          git show-ref --tags ${{ steps.app-version.outputs.release }} --quiet || rc="$?"
 
+          if  [ $rc -eq 0 ]; then
+            echo "App no changes, skip tagging ${{ steps.app-version.outputs.release }}"
+          else
+            echo "App changed , pushing new tag ${{ steps.app-version.outputs.release }} "
+            git tag ${{ steps.app-version.outputs.release }} && git push --tags    
           fi
+

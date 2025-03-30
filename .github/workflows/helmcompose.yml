@@ -1,0 +1,193 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Composer for helm release
+
+# Controls when the workflow will run
+on:
+  workflow_call:    
+    inputs:
+      version:  
+        description: version in helm release file
+        type: string
+        required: true  
+      additional_repo_name:
+        description: optional repo name to be added/removed
+        type: string
+        required: false  
+      additional_repo_url:
+        description: optional repo url to be added/removed
+        type: string
+        required: false
+      additional_repo_username:
+        description: optional secret name with the repo username
+        type: string
+        required: false  
+      additional_repo_password:
+        description: optional secret name with the repo password
+        type: string
+        required: false
+      helm_directory:
+        type: string
+        description: directory containing the helm chart and helm release folder 
+        default: 'helm'
+        required: false
+
+jobs:
+  compose:
+    defaults:
+      run:
+        shell: bash
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+     
+      - uses: cschleiden/replace-tokens@v1
+        with:
+          tokenPrefix: '#{'
+          tokenSuffix: '}#'
+          files: '["${{inputs.helm_directory}}/**/release.yaml"]'
+        env:
+          version: ${{ inputs.version }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        id: install
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@main
+        with:
+          cosign-release: "v2.2.4"
+        id: cosign-install
+
+      - name: Install Oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Authenticate Oras cli against ghcr.io
+        run: |
+          oras version  
+          echo ${{ github.token }} | oras login ghcr.io -u gituser --password-stdin
+
+      - name: Docker login to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: "ghcr.io"
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - id: helm
+        name: Build and Publish Helm chart
+        working-directory: ${{inputs.helm_directory}}
+        env:
+          CHARTS_REPOSITORY: oci://ghcr.io/${{ github.repository_owner }}/charts
+          ADDITIONAL_REPO_USERNAME_SECRET: ${{inputs.additional_repo_username}}
+          ADDITIONAL_REPO_PASSWORD_SECRET: ${{inputs.additional_repo_password}}
+        run: |
+          echo "Helm dependency build, package, publish"
+          echo "GITHUB_REPOSITORY ${GITHUB_REPOSITORY}"
+          echo "CHARTS_REPOSITORY ${CHARTS_REPOSITORY}"
+
+          additonalRepo=${{ inputs.additional_repo_name }}
+          additionalRepoUrl=${{ inputs.additional_repo_url }}
+
+          if [[ ! -z $additonalRepo && ! -z $additionalRepoUrl ]]; then
+            if [[ ! -z "${{env.ADDITIONAL_REPO_USERNAME_SECRET}}" && ! -z "${{env.ADDITIONAL_REPO_PASSWORD_SECRET}}" ]]; then
+              echo "${{secrets[env.ADDITIONAL_REPO_PASSWORD_SECRET]}}" | helm repo add $additonalRepo $additionalRepoUrl --username ${{secrets[env.ADDITIONAL_REPO_USERNAME_SECRET]}} --password-stdin
+            else
+              helm repo add $additonalRepo $additionalRepoUrl
+            fi
+          fi
+
+          tree -L 3
+
+          for dir in *; do
+            if [[ ! "$dir" =~  .*release ]]; then
+              echo "processing helm $dir"
+
+              helm dependency update $dir
+              helm package $dir --version "${{ inputs.version }}" --app-version "${{ inputs.version }}"
+              ls -lart
+              helm push $dir-"${{ inputs.version }}".tgz ${CHARTS_REPOSITORY,,}
+              
+              rm $dir-"${{ inputs.version }}".tgz      
+              ls -lart
+            fi
+          done
+
+          if [[ ! -z $additonalRepo && ! -z $additionalRepoUrl ]]; then
+            helm repo remove $additonalRepo
+          fi
+
+     
+      - id: get-flux-template
+        # note we will use the latest version on main branch in general use as templates should be just latest
+        # when introducing new template, temporarily change the branch here on development branch
+        uses: ./.github/actions/get-flux-template
+
+      - id: compose_helm_release
+        name: compose helm release
+        working-directory: ${{inputs.helm_directory}}
+        run: |
+          echo "process subdirectories under helm dir"
+
+          for dir in *; do
+            if [[ ! "$dir" =~  .*release ]]; then
+              # dir is the helm chart directory 
+              helmreleasedir="${dir}-release"
+
+              if [ -d "$helmreleasedir" ] 
+              then
+                 echo "processing helmrelease $helmreleasedir"
+
+              else
+                  echo "helm release directory $helmreleasedir does not exists. skipping"
+                  continue
+              fi
+              
+              # it may or may not have env values
+              if ls $dir/*_env.yaml > /dev/null 2>&1 
+              then
+                echo "found env value files helmreleases to copy"
+                cp $dir/*_env.yaml $helmreleasedir 
+  
+                cd $helmreleasedir
+
+                for valuefile in *_env.yaml ; do
+                  #add 4 spaces in front to fit the template
+                  cp  ${{ steps.get-flux-template.outputs.template_path }}/service/*  .
+                  sed -i -e 's/^/    /' $valuefile
+                  sed -i '1i\\' $valuefile
+                     # flux file name is prod.yaml , derived from prod_env.yaml in helm charts
+                  targetfile=${valuefile//_env/}
+                  sed -i -e "s/__NAME__/$dir/" values.yaml.template
+                  cat values.yaml.template > $targetfile
+                  cat $valuefile >> $targetfile
+                  rm $valuefile values.yaml.template
+                done
+                cd ..
+              else 
+                echo "No env values files to copy"
+                cp  ${{ steps.get-flux-template.outputs.template_path }}/service/*  $helmreleasedir
+
+              fi # checking whether there is _env file
+
+              cd $helmreleasedir
+              zip ../$helmreleasedir-${{ inputs.version }}.zip *.yaml
+
+              rm -f *_env.yaml
+              cd ..
+              ls ./${helmreleasedir}-${{ inputs.version}}.zip
+              # curl  -X PUT  -H "Authorization: Bearer ${{ github.token }}"  \
+              #   "https://maven.pkg.github.com/${GITHUB_REPOSITORY}/helmrelease-${dir}/v${{ inputs.version}}/${helmreleasedir}-${{ inputs.version}}.zip"  \
+              #   --upload-file "./${helmreleasedir}-${{ inputs.version}}.zip"  -vvv       
+
+              lowercaseurl=$(echo ghcr.io/${GITHUB_REPOSITORY}/${dir}-release:${{ inputs.version}} | tr '[:upper:]' '[:lower:]')
+
+              echo oras push ${lowercaseurl}   "./${helmreleasedir}-${{ inputs.version}}.zip:application/vnd.example.data.v1.tar+gzip"
+              oras push ${lowercaseurl}   "./${helmreleasedir}-${{ inputs.version}}.zip:application/vnd.example.data.v1.tar+gzip"
+
+              # to pull down oras pull ghcr.io/rockwell-automation-ftds/sampleapp/ra-project-data-demo-release:1.8.150
+              rm -f ./${helmreleasedir}-${{ inputs.version}}.zip     
+            fi
+          done # loop on sub dirs
